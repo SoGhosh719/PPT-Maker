@@ -12,6 +12,7 @@ import base64
 import pandas as pd
 import plotly.express as px
 import plotly.io as pio
+from streamlit_sortables import sort_items
 
 # Set default format for Plotly image export
 pio.kaleido.scope.default_format = "png"
@@ -63,9 +64,11 @@ if "edit_index" not in st.session_state:
     st.session_state.edit_index = None
 if "dataset" not in st.session_state:
     st.session_state.dataset = None
+if "sorted_slides" not in st.session_state:
+    st.session_state.sorted_slides = []
 
-# Helper function to add text to a shape with shadow
-def add_text_to_shape(shape, text, font_name, font_size=18, bold=False, font_color=(0, 0, 0)):
+# Helper function to add text to a shape with formatting
+def add_text_to_shape(shape, text, font_name, font_size=18, bold=False, italic=False, font_color=(0, 0, 0), alignment="left"):
     text_frame = shape.text_frame
     text_frame.clear()
     p = text_frame.paragraphs[0]
@@ -75,10 +78,12 @@ def add_text_to_shape(shape, text, font_name, font_size=18, bold=False, font_col
     font.name = font_name
     font.size = Pt(font_size)
     font.bold = bold
+    font.italic = italic
     font.color.rgb = RGBColor(*font_color)
+    p.alignment = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}[alignment]
 
-# Helper function to add a bullet list
-def add_bullet_list(slide, left, top, width, height, bullets, font_name, font_size=18, font_color=(0, 0, 0)):
+# Helper function to add a bullet list with formatting
+def add_bullet_list(slide, left, top, width, height, bullets, font_name, font_size=18, bold=False, italic=False, font_color=(0, 0, 0), alignment="left"):
     text_box = slide.shapes.add_textbox(left, top, width, height)
     text_frame = text_box.text_frame
     text_frame.word_wrap = True
@@ -88,8 +93,10 @@ def add_bullet_list(slide, left, top, width, height, bullets, font_name, font_si
         p.level = 0
         p.font.name = font_name
         p.font.size = Pt(font_size)
+        p.font.bold = bold
+        p.font.italic = italic
         p.font.color.rgb = RGBColor(*font_color)
-        p.alignment = PP_ALIGN.LEFT
+        p.alignment = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}[alignment]
 
 # Helper function to set slide background
 def set_slide_background(slide, bg_type, color1, color2=None):
@@ -144,6 +151,17 @@ def regenerate_plotly_fig(df, chart_type, x_col, y_col, category_col, title, fon
         st.warning(f"⚠️ Failed to regenerate chart: {str(e)}")
         return None
 
+# Helper function to determine slide layout
+def determine_layout(slide_data):
+    has_title = bool(slide_data.get("title"))
+    has_content = bool(slide_data.get("content") or slide_data.get("chart") or slide_data.get("image"))
+    if has_title and not has_content:
+        return "Title Slide"
+    elif has_title and has_content:
+        return "Title and Content"
+    else:
+        return "Blank"
+
 # Tabs for navigation
 tab1, tab2, tab3, tab4 = st.tabs(["📝 Add Slides", "🎨 Style Options", "📋 JSON Input", "👀 Preview"])
 
@@ -160,6 +178,37 @@ with tab1:
             placeholder="e.g., Introduction",
             help="Enter the title for your slide."
         )
+        # Text formatting controls
+        st.subheader("Text Formatting")
+        title_font_size = st.selectbox(
+            "Title Font Size",
+            [20, 24, 28, 32],
+            index=[20, 24, 28, 32].index(slide_data.get("title_font_size", 24)) if slide_data.get("title_font_size") else 1,
+            help="Font size for the slide title."
+        )
+        title_alignment = st.selectbox(
+            "Title Alignment",
+            ["Left", "Center", "Right"],
+            index=["Left", "Center", "Right"].index(slide_data.get("title_alignment", "Left")) if slide_data.get("title_alignment") else 0,
+            help="Alignment for the slide title."
+        )
+        title_bold = st.checkbox("Title Bold", value=slide_data.get("title_bold", True), help="Make the title bold.")
+        title_italic = st.checkbox("Title Italic", value=slide_data.get("title_italic", False), help="Make the title italic.")
+        body_font_size = st.selectbox(
+            "Body Font Size",
+            [14, 16, 18, 20],
+            index=[14, 16, 18, 20].index(slide_data.get("body_font_size", 18)) if slide_data.get("body_font_size") else 2,
+            help="Font size for bullet points."
+        )
+        body_alignment = st.selectbox(
+            "Body Alignment",
+            ["Left", "Center", "Right"],
+            index=["Left", "Center", "Right"].index(slide_data.get("body_alignment", "Left")) if slide_data.get("body_alignment") else 0,
+            help="Alignment for bullet points."
+        )
+        body_bold = st.checkbox("Body Bold", value=slide_data.get("body_bold", False), help="Make bullet points bold.")
+        body_italic = st.checkbox("Body Italic", value=slide_data.get("body_italic", False), help="Make bullet points italic.")
+        
         bullets = st.multiselect(
             "Bullet Points (add one at a time)",
             options=slide_data.get("content", []) + [""] if edit_mode else [],
@@ -257,7 +306,6 @@ with tab1:
                             font=dict(family=st.session_state.get("style", {}).get("font", "Arial"), color=st.session_state.get("style", {}).get("font_color", "#000000"))
                         )
                         st.plotly_chart(fig, use_container_width=True)
-                        plotly_fig = fig
                         chart_data = {"x_col": x_col, "y_col": y_col, "category_col": category_col if category_col != "None" else None}
                     except Exception as e:
                         st.error(f"❌ Error generating chart: {str(e)}")
@@ -289,7 +337,15 @@ with tab1:
                     "chart_data": chart_data,
                     "chart_input_type": chart_input_type,
                     "image": image.strip() if image.strip() else None,
-                    "transition": slide_transition
+                    "transition": slide_transition,
+                    "title_font_size": title_font_size,
+                    "title_alignment": title_alignment.lower(),
+                    "title_bold": title_bold,
+                    "title_italic": title_italic,
+                    "body_font_size": body_font_size,
+                    "body_alignment": body_alignment.lower(),
+                    "body_bold": body_bold,
+                    "body_italic": body_italic
                 }
                 st.session_state.undo_stack.append(st.session_state.slides.copy())
                 if edit_mode:
@@ -323,8 +379,6 @@ with tab2:
         help="Choose a font for your presentation."
     )
     st.info("ℹ️ Use widely available fonts (e.g., Arial, Calibri) for compatibility. Embed custom fonts in PowerPoint via File > Options > Save.")
-    title_font_size = st.selectbox("Title Font Size", [20, 24, 28, 32], index=1)
-    body_font_size = st.selectbox("Body Font Size", [14, 16, 18, 20], index=2)
     font_color_hex = st.color_picker(
         "Font Color", 
         value=st.session_state.style.get("font_color", "#000000") if "style" in st.session_state else "#000000"
@@ -347,7 +401,7 @@ with tab2:
     ) if bg_type == "Gradient" else None
     bg_color2 = tuple(int(bg_color2_hex[i:i+2], 16) for i in (1, 3, 5)) if bg_color2_hex else None
     
-    # Set default style if not already set
+    # Set default style
     if "style" not in st.session_state:
         st.session_state.style = {
             "font": font_name,
@@ -357,11 +411,34 @@ with tab2:
             "bg_color2": bg_color2_hex if bg_color2_hex else None
         }
     
-    layout_name = st.selectbox("Slide Layout", ["Title Slide", "Title and Content", "Blank"], index=1)
+    layout_name = st.selectbox("Default Slide Layout", ["Title Slide", "Title and Content", "Blank"], index=1)
     layout_indices = {"Title Slide": 0, "Title and Content": 1, "Blank": 6}
-    layout_index = layout_indices[layout_name]
+    default_layout_index = layout_indices[layout_name]
     
     transition = st.selectbox("Default Transition", ["None", "Fade", "Push", "Wipe", "Morph", "Zoom"], index=1)
+    
+    # Theme export/import
+    st.subheader("Export/Import Theme")
+    if st.button("Export Theme"):
+        theme_json = json.dumps(st.session_state.style, indent=2)
+        st.download_button(
+            label="Download Theme JSON",
+            data=theme_json,
+            file_name="theme.json",
+            mime="application/json"
+        )
+    theme_file = st.file_uploader("Upload Theme JSON", type=["json"])
+    if theme_file:
+        try:
+            theme_data = json.load(theme_file)
+            required_keys = ["font", "font_color", "bg_type", "bg_color1"]
+            if all(key in theme_data for key in required_keys):
+                st.session_state.style = theme_data
+                st.success("✅ Theme imported!")
+            else:
+                st.error("❌ Invalid theme JSON: Missing required keys.")
+        except json.JSONDecodeError:
+            st.error("❌ Invalid JSON format.")
     
     st.header("Style Preview")
     st.markdown(
@@ -387,7 +464,15 @@ with tab3:
     "chart_data": {"categories": ["Category A", "Category B"], "values": [60, 40]},
     "chart_input_type": "Manual",
     "image": "image1.png",
-    "transition": "Fade"
+    "transition": "Fade",
+    "title_font_size": 24,
+    "title_alignment": "left",
+    "title_bold": true,
+    "title_italic": false,
+    "body_font_size": 18,
+    "body_alignment": "left",
+    "body_bold": false,
+    "body_italic": false
   },
   {
     "title": "Data Analysis",
@@ -395,7 +480,15 @@ with tab3:
     "chart": "bar",
     "chart_data": {"x_col": "Region", "y_col": "Sales", "category_col": "Year"},
     "chart_input_type": "Dataset",
-    "transition": "Wipe"
+    "transition": "Wipe",
+    "title_font_size": 28,
+    "title_alignment": "center",
+    "title_bold": true,
+    "title_italic": false,
+    "body_font_size": 16,
+    "body_alignment": "left",
+    "body_bold": false,
+    "body_italic": false
   }
 ]
         ''',
@@ -426,6 +519,16 @@ with tab4:
     
     if st.session_state.slides:
         st.subheader("Current Slides")
+        # Drag-and-drop reordering
+        slide_items = [{"id": i, "title": slide.get("title", "Untitled")} for i, slide in enumerate(st.session_state.slides)]
+        sorted_items = sort_items(slide_items, multi_containers=False, direction="vertical", key="slide_sorter")
+        if sorted_items != slide_items:
+            new_order = [item["id"] for item in sorted_items]
+            st.session_state.undo_stack.append(st.session_state.slides.copy())
+            st.session_state.slides = [st.session_state.slides[i] for i in new_order]
+            st.session_state.redo_stack = []
+            st.success("✅ Slides reordered!")
+        
         for i, slide in enumerate(st.session_state.slides):
             with st.expander(f"Slide {i+1}: {slide.get('title', 'Untitled')}"):
                 st.markdown(f"**Title**: {slide.get('title', 'Untitled')}")
@@ -467,7 +570,7 @@ with tab4:
                 if slide.get("image") and slide.get("image") in image_files:
                     st.image(image_files[slide["image"]], caption="Image Preview", width=200)
                 st.markdown(f"**Transition**: {slide.get('transition', transition)}")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     if st.button("Edit", key=f"edit_{i}"):
                         st.session_state.edit_index = i
@@ -478,7 +581,13 @@ with tab4:
                         st.session_state.slides.pop(i)
                         st.session_state.redo_stack = []
                         st.success("✅ Slide deleted!")
-        
+                with col3:
+                    if st.button("Duplicate", key=f"duplicate_{i}"):
+                        st.session_state.undo_stack.append(st.session_state.slides.copy())
+                        st.session_state.slides.append(slide.copy())
+                        st.session_state.redo_stack = []
+                        st.success("✅ Slide duplicated!")
+    
         # Undo/Redo buttons
         col1, col2 = st.columns(2)
         with col1:
@@ -514,7 +623,18 @@ if st.button("Generate PPT", key="generate_ppt"):
                 chart_input_type = slide_data.get("chart_input_type", "Manual")
                 image_path = slide_data.get("image", None)
                 slide_transition = slide_data.get("transition", transition)
+                title_font_size = slide_data.get("title_font_size", 24)
+                title_alignment = slide_data.get("title_alignment", "left")
+                title_bold = slide_data.get("title_bold", True)
+                title_italic = slide_data.get("title_italic", False)
+                body_font_size = slide_data.get("body_font_size", 18)
+                body_alignment = slide_data.get("body_alignment", "left")
+                body_bold = slide_data.get("body_bold", False)
+                body_italic = slide_data.get("body_italic", False)
                 
+                # Auto-layout detection
+                layout_name = determine_layout(slide_data)
+                layout_index = layout_indices[layout_name]
                 slide_layout = prs.slide_layouts[layout_index]
                 slide = prs.slides.add_slide(slide_layout)
                 set_slide_background(slide, bg_type, bg_color1, bg_color2)
@@ -523,10 +643,17 @@ if st.button("Generate PPT", key="generate_ppt"):
                     title_shape = slide.shapes.title
                 else:
                     title_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(1))
-                add_text_to_shape(title_shape, title, font_name=font_name, font_size=title_font_size, bold=True, font_color=font_color)
+                add_text_to_shape(
+                    title_shape, title, font_name=font_name, font_size=title_font_size,
+                    bold=title_bold, italic=title_italic, font_color=font_color, alignment=title_alignment
+                )
                 
                 if content:
-                    add_bullet_list(slide, Inches(0.5), Inches(1.5), Inches(4), Inches(4), content, font_name=font_name, font_size=body_font_size, font_color=font_color)
+                    add_bullet_list(
+                        slide, Inches(0.5), Inches(1.5), Inches(4), Inches(4), content,
+                        font_name=font_name, font_size=body_font_size, bold=body_bold,
+                        italic=body_italic, font_color=font_color, alignment=body_alignment
+                    )
                 
                 if chart_type in ["pie", "bar", "line"] and chart_data_input and chart_input_type == "Manual":
                     try:
@@ -604,9 +731,9 @@ if st.button("Generate PPT", key="generate_ppt"):
 if st.button("Show Tutorial"):
     st.markdown("""
     **Welcome to the PPT Generator!** Follow these steps:
-    1. **Add Slides**: Use the 'Add Slides' tab to create slides with titles, bullet points, charts (manual or dataset-driven), and images.
-    2. **Customize Styles**: In the 'Style Options' tab, choose fonts, colors, and backgrounds. Try a preset for quick styling!
-    3. **Advanced Input**: Use the 'JSON Input' tab to paste a JSON outline (optional).
-    4. **Preview and Edit**: Check your slides in the 'Preview' tab, edit or delete as needed.
+    1. **Add Slides**: Create slides with titles, bullet points, charts (manual or dataset-driven), and images. Customize text formatting per slide.
+    2. **Customize Styles**: Choose fonts, colors, and backgrounds. Export/import themes as JSON.
+    3. **Advanced Input**: Paste a JSON outline in the 'JSON Input' tab.
+    4. **Preview and Edit**: View, edit, delete, duplicate, or reorder slides (drag-and-drop) in the 'Preview' tab.
     5. **Generate PPT**: Click 'Generate PPT' to download your presentation.
     """)
