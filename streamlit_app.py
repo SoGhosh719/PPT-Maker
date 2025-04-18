@@ -236,4 +236,3 @@ if st.button("Generate PPT"):
             st.error(f"❌ Error in outline structure: {str(e)}")
         except Exception as e:
             st.error(f"❌ Error generating PPT: {str(e)}")
-```
