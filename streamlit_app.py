@@ -11,6 +11,10 @@ import matplotlib.pyplot as plt
 import base64
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
+
+# Set default format for Plotly image export
+pio.kaleido.scope.default_format = "png"
 
 # Custom CSS for visual polish
 st.markdown(
@@ -119,6 +123,26 @@ def generate_chart_preview(chart_type, categories, values, font_color_hex):
     plt.close()
     buf.seek(0)
     return buf
+
+# Helper function to regenerate Plotly figure from chart data
+def regenerate_plotly_fig(df, chart_type, x_col, y_col, category_col, title, font_name, font_color_hex):
+    try:
+        if chart_type == "bar":
+            fig = px.bar(df, x=x_col, y=y_col, color=category_col if category_col else None)
+        elif chart_type == "line":
+            fig = px.line(df, x=x_col, y=y_col, color=category_col if category_col else None)
+        elif chart_type == "pie":
+            fig = px.pie(df, names=x_col, values=y_col)
+        elif chart_type == "scatter":
+            fig = px.scatter(df, x=x_col, y=y_col, color=category_col if category_col else None)
+        fig.update_layout(
+            title=title or "Chart",
+            font=dict(family=font_name, color=font_color_hex)
+        )
+        return fig
+    except Exception as e:
+        st.warning(f"⚠️ Failed to regenerate chart: {str(e)}")
+        return None
 
 # Tabs for navigation
 tab1, tab2, tab3, tab4 = st.tabs(["📝 Add Slides", "🎨 Style Options", "📋 JSON Input", "👀 Preview"])
@@ -264,7 +288,6 @@ with tab1:
                     "chart": chart_type.lower() if chart_type and chart_type != "None" else "",
                     "chart_data": chart_data,
                     "chart_input_type": chart_input_type,
-                    "plotly_fig": plotly_fig if chart_input_type == "Dataset" else None,
                     "image": image.strip() if image.strip() else None,
                     "transition": slide_transition
                 }
@@ -323,6 +346,16 @@ with tab2:
         value=st.session_state.style.get("bg_color2", "#DDE4FF") if "style" in st.session_state and st.session_state.style.get("bg_color2") else "#DDE4FF"
     ) if bg_type == "Gradient" else None
     bg_color2 = tuple(int(bg_color2_hex[i:i+2], 16) for i in (1, 3, 5)) if bg_color2_hex else None
+    
+    # Set default style if not already set
+    if "style" not in st.session_state:
+        st.session_state.style = {
+            "font": font_name,
+            "font_color": font_color_hex,
+            "bg_type": bg_type,
+            "bg_color1": bg_color1_hex,
+            "bg_color2": bg_color2_hex if bg_color2_hex else None
+        }
     
     layout_name = st.selectbox("Slide Layout", ["Title Slide", "Title and Content", "Blank"], index=1)
     layout_indices = {"Title Slide": 0, "Title and Content": 1, "Blank": 6}
@@ -406,12 +439,31 @@ with tab4:
                             slide["chart"], 
                             slide["chart_data"]["categories"], 
                             slide["chart_data"]["values"], 
-                            font_color_hex
+                            st.session_state.style.get("font_color", "#000000")
                         )
                         if chart_buf:
-                            st.image(chart_buf, caption="Chart Preview", use_column_width=True)
-                    elif slide.get("chart_input_type") == "Dataset" and slide.get("plotly_fig"):
-                        st.plotly_chart(slide["plotly_fig"], use_container_width=True)
+                            st.image(chart_buf, caption="Chart Preview", use_container_width=True)
+                    elif slide.get("chart_input_type") == "Dataset" and st.session_state.dataset is not None:
+                        df = st.session_state.dataset
+                        chart_data = slide.get("chart_data", {})
+                        x_col = chart_data.get("x_col")
+                        y_col = chart_data.get("y_col")
+                        category_col = chart_data.get("category_col")
+                        if x_col and y_col and x_col in df.columns and y_col in df.columns:
+                            fig = regenerate_plotly_fig(
+                                df, 
+                                slide["chart"], 
+                                x_col, 
+                                y_col, 
+                                category_col, 
+                                slide["title"], 
+                                st.session_state.style.get("font", "Arial"), 
+                                st.session_state.style.get("font_color", "#000000")
+                            )
+                            if fig:
+                                st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("⚠️ Invalid chart data or dataset missing.")
                 if slide.get("image") and slide.get("image") in image_files:
                     st.image(image_files[slide["image"]], caption="Image Preview", width=200)
                 st.markdown(f"**Transition**: {slide.get('transition', transition)}")
@@ -460,7 +512,6 @@ if st.button("Generate PPT", key="generate_ppt"):
                 chart_type = slide_data.get("chart", "").lower()
                 chart_data_input = slide_data.get("chart_data", None)
                 chart_input_type = slide_data.get("chart_input_type", "Manual")
-                plotly_fig = slide_data.get("plotly_fig", None)
                 image_path = slide_data.get("image", None)
                 slide_transition = slide_data.get("transition", transition)
                 
@@ -499,11 +550,27 @@ if st.button("Generate PPT", key="generate_ppt"):
                     except (KeyError, TypeError, ValueError) as e:
                         st.warning(f"⚠️ Invalid chart data for slide '{title}': {str(e)}")
                 
-                if chart_type in ["bar", "line", "pie", "scatter"] and chart_input_type == "Dataset" and plotly_fig:
+                if chart_type in ["bar", "line", "pie", "scatter"] and chart_input_type == "Dataset" and chart_data_input and st.session_state.dataset is not None:
                     try:
-                        chart_buf = plotly_fig.write_image(format="png")
-                        chart_stream = io.BytesIO(chart_buf)
-                        slide.shapes.add_picture(chart_stream, Inches(5), Inches(1.5), width=Inches(4))
+                        df = st.session_state.dataset
+                        x_col = chart_data_input.get("x_col")
+                        y_col = chart_data_input.get("y_col")
+                        category_col = chart_data_input.get("category_col")
+                        if x_col and y_col and x_col in df.columns and y_col in df.columns:
+                            fig = regenerate_plotly_fig(
+                                df, chart_type, x_col, y_col, category_col, title,
+                                st.session_state.style.get("font", "Arial"),
+                                st.session_state.style.get("font_color", "#000000")
+                            )
+                            if fig:
+                                chart_stream = io.BytesIO()
+                                fig.write_image(file=chart_stream, format="png")
+                                chart_stream.seek(0)
+                                slide.shapes.add_picture(chart_stream, Inches(5), Inches(1.5), width=Inches(4))
+                            else:
+                                st.warning(f"⚠️ Failed to generate chart for slide '{title}'.")
+                        else:
+                            st.warning(f"⚠️ Invalid chart data for slide '{title}'.")
                     except Exception as e:
                         st.warning(f"⚠️ Failed to add dataset chart for slide '{title}': {str(e)}")
                 
