@@ -71,9 +71,29 @@ def set_slide_background(slide, bg_type, color1, color2=None):
 st.sidebar.header("🎨 Presentation Style Options")
 font_name = st.sidebar.selectbox(
     "Font Type",
-    ["Arial", "Calibri", "Times New Roman", "Helvetica", "Verdana", "Georgia", "Roboto"],
+    [
+        "Arial",
+        "Calibri",
+        "Times New Roman",
+        "Helvetica",
+        "Verdana",
+        "Georgia",
+        "Roboto",
+        "Open Sans",
+        "Trebuchet MS",
+        "Tahoma",
+        "Segoe UI",
+        "Palatino Linotype",
+        "Garamond",
+        "Book Antiqua",
+        "Courier New",
+        "Consolas",
+        "Impact",
+        "Comic Sans MS"
+    ],
     index=0
 )
+st.sidebar.info("ℹ️ Choose widely available fonts (e.g., Arial, Calibri) to ensure compatibility across systems. To embed custom fonts, open the PPT in PowerPoint and enable 'Embed fonts' in File > Options > Save.")
 title_font_size = st.sidebar.selectbox(
     "Title Font Size",
     [20, 24, 28, 32],
