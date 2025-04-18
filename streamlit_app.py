@@ -297,7 +297,7 @@ with tab2:
             "Garamond", "Book Antiqua", "Courier New", "Consolas", "Impact", "Comic Sans MS"
         ],
         index=0 if "style" not in st.session_state else ["Arial", "Calibri", "Times New Roman", "Helvetica", "Verdana", "Georgia", "Roboto", "Open Sans", "Trebuchet MS", "Tahoma", "Segoe UI", "Palatino Linotype", "Garamond", "Book Antiqua", "Courier New", "Consolas", "Impact", "Comic Sans MS"].index(st.session_state.style.get("font", "Arial")),
-        help0=0
+        help="Choose a font for your presentation."
     )
     st.info("ℹ️ Use widely available fonts (e.g., Arial, Calibri) for compatibility. Embed custom fonts in PowerPoint via File > Options > Save.")
     title_font_size = st.selectbox("Title Font Size", [20, 24, 28, 32], index=1)
@@ -516,7 +516,7 @@ if st.button("Generate PPT", key="generate_ppt"):
                 
                 slide.notes_slide.notes_text_frame.text = f"Recommended transition: {slide_transition}"
             
-            buffer | io.BytesIO()
+            buffer = io.BytesIO()
             prs.save(buffer)
             buffer.seek(0)
             
