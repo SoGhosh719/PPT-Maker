@@ -6,12 +6,11 @@ from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.dml.fill import FillFormat
-from pptx.oxml.xmlchemy import OxmlElement
-from pptx.dml.effect import ShadowFormat
 import io
 import matplotlib.pyplot as plt
 import base64
+import pandas as pd
+import plotly.express as px
 
 # Custom CSS for visual polish
 st.markdown(
@@ -58,6 +57,8 @@ if "redo_stack" not in st.session_state:
     st.session_state.redo_stack = []
 if "edit_index" not in st.session_state:
     st.session_state.edit_index = None
+if "dataset" not in st.session_state:
+    st.session_state.dataset = None
 
 # Helper function to add text to a shape with shadow
 def add_text_to_shape(shape, text, font_name, font_size=18, bold=False, font_color=(0, 0, 0)):
@@ -71,12 +72,6 @@ def add_text_to_shape(shape, text, font_name, font_size=18, bold=False, font_col
     font.size = Pt(font_size)
     font.bold = bold
     font.color.rgb = RGBColor(*font_color)
-    shadow = shape.shadow
-    shadow.inherit = False
-    shadow_format = ShadowFormat(shadow._element)
-    shadow_format.distance = Pt(2)
-    shadow_format.angle = 45
-    shadow_format.color.rgb = RGBColor(100, 100, 100)
 
 # Helper function to add a bullet list
 def add_bullet_list(slide, left, top, width, height, bullets, font_name, font_size=18, font_color=(0, 0, 0)):
@@ -107,7 +102,7 @@ def set_slide_background(slide, bg_type, color1, color2=None):
         stop2 = fill.gradient_stops[1]
         stop2.color.rgb = RGBColor(*color2 if color2 else color1)
 
-# Helper function to generate chart preview
+# Helper function to generate chart preview (for manual chart input)
 def generate_chart_preview(chart_type, categories, values, font_color_hex):
     if not categories or not values:
         return None
@@ -152,34 +147,96 @@ with tab1:
         if new_bullet and new_bullet not in bullets:
             bullets.append(new_bullet)
         
-        chart_type = st.selectbox(
-            "Chart Type", 
-            ["None", "Pie", "Bar", "Line"],
-            index=["None", "Pie", "Bar", "Line"].index(slide_data.get("chart", "None").capitalize()) if slide_data.get("chart") else 0,
-            help="Select a chart type or None."
-        )
-        categories = []
-        values = []
-        if chart_type != "None":
-            st.subheader("Chart Data")
-            num_points = st.slider("Number of Data Points", 2, 10, 3)
-            cols = st.columns(2)
-            with cols[0]:
-                for i in range(num_points):
-                    cat = st.text_input(
-                        f"Category {i+1}", 
-                        value=slide_data.get("chart_data", {}).get("categories", [])[i] if i < len(slide_data.get("chart_data", {}).get("categories", [])) else "",
-                        key=f"cat_{i}"
-                    )
-                    categories.append(cat)
-            with cols[1]:
-                for i in range(num_points):
-                    val = st.number_input(
-                        f"Value {i+1}", 
-                        value=slide_data.get("chart_data", {}).get("values", [])[i] if i < len(slide_data.get("chart_data", {}).get("values", [])) else 0.0,
-                        key=f"val_{i}"
-                    )
-                    values.append(val)
+        # Dataset-driven chart input
+        st.subheader("Chart Options")
+        chart_input_type = st.radio("Chart Input Method", ["Manual", "Dataset"], index=0)
+        
+        chart_type = None
+        chart_data = None
+        plotly_fig = None
+        
+        if chart_input_type == "Manual":
+            chart_type = st.selectbox(
+                "Chart Type", 
+                ["None", "Pie", "Bar", "Line"],
+                index=["None", "Pie", "Bar", "Line"].index(slide_data.get("chart", "None").capitalize()) if slide_data.get("chart") else 0,
+                help="Select a chart type or None."
+            )
+            categories = []
+            values = []
+            if chart_type != "None":
+                st.subheader("Chart Data")
+                num_points = st.slider("Number of Data Points", 2, 10, 3)
+                cols = st.columns(2)
+                with cols[0]:
+                    for i in range(num_points):
+                        cat = st.text_input(
+                            f"Category {i+1}", 
+                            value=slide_data.get("chart_data", {}).get("categories", [])[i] if i < len(slide_data.get("chart_data", {}).get("categories", [])) else "",
+                            key=f"cat_{i}"
+                        )
+                        categories.append(cat)
+                with cols[1]:
+                    for i in range(num_points):
+                        val = st.number_input(
+                            f"Value {i+1}", 
+                            value=slide_data.get("chart_data", {}).get("values", [])[i] if i < len(slide_data.get("chart_data", {}).get("values", [])) else 0.0,
+                            key=f"val_{i}"
+                        )
+                        values.append(val)
+                chart_data = {"categories": [c for c in categories if c], "values": [v for v in values if v]}
+        
+        elif chart_input_type == "Dataset":
+            uploaded_file = st.file_uploader("Upload Dataset (CSV)", type=["csv"], key="dataset_upload")
+            if uploaded_file:
+                try:
+                    df = pd.read_csv(uploaded_file)
+                    st.session_state.dataset = df
+                    st.dataframe(df.head(), use_container_width=True)
+                except Exception as e:
+                    st.error(f"❌ Invalid CSV file: {str(e)}")
+            
+            if st.session_state.dataset is not None:
+                df = st.session_state.dataset
+                chart_type = st.selectbox(
+                    "Chart Type",
+                    ["Bar", "Line", "Pie", "Scatter"],
+                    index=["Bar", "Line", "Pie", "Scatter"].index(slide_data.get("chart", "Bar")) if slide_data.get("chart") else 0,
+                    help="Select a chart type for the dataset."
+                )
+                x_col = st.selectbox("X-Axis Column", df.columns, key="x_col")
+                y_col = st.selectbox(
+                    "Y-Axis Column",
+                    df.select_dtypes(include=['float64', 'int64']).columns,
+                    key="y_col"
+                )
+                category_col = st.selectbox("Category (Optional)", ["None"] + list(df.columns), key="category_col")
+                
+                # Validate selections
+                if not pd.api.types.is_numeric_dtype(df[y_col]):
+                    st.error("❌ Y-Axis column must be numeric.")
+                elif df[x_col].isna().any() or df[y_col].isna().any():
+                    st.error("❌ Selected columns contain missing values.")
+                else:
+                    # Generate Plotly chart
+                    try:
+                        if chart_type == "Bar":
+                            fig = px.bar(df, x=x_col, y=y_col, color=category_col if category_col != "None" else None)
+                        elif chart_type == "Line":
+                            fig = px.line(df, x=x_col, y=y_col, color=category_col if category_col != "None" else None)
+                        elif chart_type == "Pie":
+                            fig = px.pie(df, names=x_col, values=y_col)
+                        elif chart_type == "Scatter":
+                            fig = px.scatter(df, x=x_col, y=y_col, color=category_col if category_col != "None" else None)
+                        fig.update_layout(
+                            title=title or "Chart",
+                            font=dict(family=st.session_state.get("style", {}).get("font", "Arial"), color=st.session_state.get("style", {}).get("font_color", "#000000"))
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        plotly_fig = fig
+                        chart_data = {"x_col": x_col, "y_col": y_col, "category_col": category_col if category_col != "None" else None}
+                    except Exception as e:
+                        st.error(f"❌ Error generating chart: {str(e)}")
         
         image = st.text_input(
             "Image Filename (from uploaded images)",
@@ -198,15 +255,16 @@ with tab1:
         if submit:
             if not title.strip():
                 st.error("❌ Please provide a slide title.")
+            elif chart_input_type == "Dataset" and st.session_state.dataset is None:
+                st.error("❌ Please upload a dataset for dataset-driven charts.")
             else:
                 new_slide = {
                     "title": title,
                     "content": [b for b in bullets if b],
-                    "chart": chart_type.lower() if chart_type != "None" else "",
-                    "chart_data": {
-                        "categories": [c for c in categories if c],
-                        "values": [v for v in values if v]
-                    } if chart_type != "None" and categories and values else None,
+                    "chart": chart_type.lower() if chart_type and chart_type != "None" else "",
+                    "chart_data": chart_data,
+                    "chart_input_type": chart_input_type,
+                    "plotly_fig": plotly_fig if chart_input_type == "Dataset" else None,
                     "image": image.strip() if image.strip() else None,
                     "transition": slide_transition
                 }
@@ -239,7 +297,7 @@ with tab2:
             "Garamond", "Book Antiqua", "Courier New", "Consolas", "Impact", "Comic Sans MS"
         ],
         index=0 if "style" not in st.session_state else ["Arial", "Calibri", "Times New Roman", "Helvetica", "Verdana", "Georgia", "Roboto", "Open Sans", "Trebuchet MS", "Tahoma", "Segoe UI", "Palatino Linotype", "Garamond", "Book Antiqua", "Courier New", "Consolas", "Impact", "Comic Sans MS"].index(st.session_state.style.get("font", "Arial")),
-        help="Choose a font for your presentation."
+        help0=0
     )
     st.info("ℹ️ Use widely available fonts (e.g., Arial, Calibri) for compatibility. Embed custom fonts in PowerPoint via File > Options > Save.")
     title_font_size = st.selectbox("Title Font Size", [20, 24, 28, 32], index=1)
@@ -294,12 +352,16 @@ with tab3:
     "content": ["Point 1", "Point 2"],
     "chart": "pie",
     "chart_data": {"categories": ["Category A", "Category B"], "values": [60, 40]},
+    "chart_input_type": "Manual",
     "image": "image1.png",
     "transition": "Fade"
   },
   {
-    "title": "Conclusion",
-    "content": ["Summary"],
+    "title": "Data Analysis",
+    "content": ["Analysis Results"],
+    "chart": "bar",
+    "chart_data": {"x_col": "Region", "y_col": "Sales", "category_col": "Year"},
+    "chart_input_type": "Dataset",
     "transition": "Wipe"
   }
 ]
@@ -339,14 +401,17 @@ with tab4:
                     for bullet in slide.get("content", []):
                         st.markdown(f"- {bullet}")
                 if slide.get("chart") and slide.get("chart_data"):
-                    chart_buf = generate_chart_preview(
-                        slide["chart"], 
-                        slide["chart_data"]["categories"], 
-                        slide["chart_data"]["values"], 
-                        font_color_hex
-                    )
-                    if chart_buf:
-                        st.image(chart_buf, caption="Chart Preview", use_column_width=True)
+                    if slide.get("chart_input_type") == "Manual":
+                        chart_buf = generate_chart_preview(
+                            slide["chart"], 
+                            slide["chart_data"]["categories"], 
+                            slide["chart_data"]["values"], 
+                            font_color_hex
+                        )
+                        if chart_buf:
+                            st.image(chart_buf, caption="Chart Preview", use_column_width=True)
+                    elif slide.get("chart_input_type") == "Dataset" and slide.get("plotly_fig"):
+                        st.plotly_chart(slide["plotly_fig"], use_container_width=True)
                 if slide.get("image") and slide.get("image") in image_files:
                     st.image(image_files[slide["image"]], caption="Image Preview", width=200)
                 st.markdown(f"**Transition**: {slide.get('transition', transition)}")
@@ -394,6 +459,8 @@ if st.button("Generate PPT", key="generate_ppt"):
                 content = slide_data.get("content", [])
                 chart_type = slide_data.get("chart", "").lower()
                 chart_data_input = slide_data.get("chart_data", None)
+                chart_input_type = slide_data.get("chart_input_type", "Manual")
+                plotly_fig = slide_data.get("plotly_fig", None)
                 image_path = slide_data.get("image", None)
                 slide_transition = slide_data.get("transition", transition)
                 
@@ -410,7 +477,7 @@ if st.button("Generate PPT", key="generate_ppt"):
                 if content:
                     add_bullet_list(slide, Inches(0.5), Inches(1.5), Inches(4), Inches(4), content, font_name=font_name, font_size=body_font_size, font_color=font_color)
                 
-                if chart_type in ["pie", "bar", "line"] and chart_data_input:
+                if chart_type in ["pie", "bar", "line"] and chart_data_input and chart_input_type == "Manual":
                     try:
                         chart_data = CategoryChartData()
                         chart_data.categories = chart_data_input["categories"]
@@ -432,6 +499,14 @@ if st.button("Generate PPT", key="generate_ppt"):
                     except (KeyError, TypeError, ValueError) as e:
                         st.warning(f"⚠️ Invalid chart data for slide '{title}': {str(e)}")
                 
+                if chart_type in ["bar", "line", "pie", "scatter"] and chart_input_type == "Dataset" and plotly_fig:
+                    try:
+                        chart_buf = plotly_fig.write_image(format="png")
+                        chart_stream = io.BytesIO(chart_buf)
+                        slide.shapes.add_picture(chart_stream, Inches(5), Inches(1.5), width=Inches(4))
+                    except Exception as e:
+                        st.warning(f"⚠️ Failed to add dataset chart for slide '{title}': {str(e)}")
+                
                 if image_path and image_path in image_files:
                     try:
                         img_stream = io.BytesIO(image_files[image_path].read())
@@ -441,7 +516,7 @@ if st.button("Generate PPT", key="generate_ppt"):
                 
                 slide.notes_slide.notes_text_frame.text = f"Recommended transition: {slide_transition}"
             
-            buffer = io.BytesIO()
+            buffer | io.BytesIO()
             prs.save(buffer)
             buffer.seek(0)
             
@@ -462,7 +537,7 @@ if st.button("Generate PPT", key="generate_ppt"):
 if st.button("Show Tutorial"):
     st.markdown("""
     **Welcome to the PPT Generator!** Follow these steps:
-    1. **Add Slides**: Use the 'Add Slides' tab to create slides with titles, bullet points, charts, and images.
+    1. **Add Slides**: Use the 'Add Slides' tab to create slides with titles, bullet points, charts (manual or dataset-driven), and images.
     2. **Customize Styles**: In the 'Style Options' tab, choose fonts, colors, and backgrounds. Try a preset for quick styling!
     3. **Advanced Input**: Use the 'JSON Input' tab to paste a JSON outline (optional).
     4. **Preview and Edit**: Check your slides in the 'Preview' tab, edit or delete as needed.
