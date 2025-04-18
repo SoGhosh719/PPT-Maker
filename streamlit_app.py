@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import json
 from pptx import Presentation
